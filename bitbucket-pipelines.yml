@@ -1,0 +1,83 @@
+image: python:3.9
+
+definitions:
+  caches:
+    pip: ~/.cache/pip
+  
+  steps:
+    - step: &lint
+        name: Lint & Format Check
+        caches:
+          - pip
+        script:
+          - pip install black flake8 pylint
+          - black --check app/ tests/ || true
+          - flake8 app/ tests/
+          - pylint app/ --fail-under=7.0 || true
+    
+    - step: &unit-tests
+        name: Unit Tests
+        caches:
+          - pip
+        script:
+          - pip install -r requirements-dev.txt
+          - pytest tests/test_unit.py -v --cov=app --cov-report=xml --cov-report=html
+        artifacts:
+          - htmlcov/**
+          - coverage.xml
+    
+    - step: &integration-tests
+        name: Integration Tests
+        caches:
+          - pip
+        script:
+          - pip install -r requirements-dev.txt
+          - pytest tests/test_integration.py -v --cov=app --cov-report=xml --cov-report=html
+        artifacts:
+          - htmlcov/**
+          - coverage.xml
+    
+    - step: &build-docker
+        name: Build Docker Image
+        trigger: manual
+        runs-on:
+          - windows
+        script:
+          - docker build -f docker/Dockerfile -t bitbucket-cicd:$BITBUCKET_COMMIT .
+          - docker save bitbucket-cicd:$BITBUCKET_COMMIT > image.tar
+        artifacts:
+          - image.tar
+
+pipelines:
+  default:
+    - parallel:
+        - step: *lint
+        - step: *unit-tests
+    - step: *integration-tests
+  
+  branches:
+    master:
+      - parallel:
+          - step: *lint
+          - step: *unit-tests
+      - step: *integration-tests
+      - step: *build-docker
+    
+    develop:
+      - parallel:
+          - step: *lint
+          - step: *unit-tests
+      - step: *integration-tests
+    
+    feature/*:
+      - parallel:
+          - step: *lint
+          - step: *unit-tests
+      - step: *integration-tests
+
+  pull-requests:
+    feature/*:
+      - parallel:
+          - step: *lint
+          - step: *unit-tests
+      - step: *integration-tests
